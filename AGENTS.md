@@ -1,0 +1,29 @@
+# AGENTS.md
+
+- **Build**: `./gradlew assembleDebug` produces a debug APK at `app/build/outputs/apk/debug/app-debug.apk`. CI uses the same command with `--stacktrace`.
+- **No Android Studio needed**: the project builds entirely from the command line with the Android SDK installed.
+- **Intent handling**: `MainActivity` is declared `android:launchMode="singleTask"`; new file intents arrive via `onNewIntent`, updating `pendingIntentUri` which triggers loading.
+- **URI schemes**:
+  - `content://` URIs are readable without extra storage permission.
+  - `file://` URIs require runtime permission: `READ_MEDIA_AUDIO` on API 33+ or `READ_EXTERNAL_STORAGE` on older devices. Permission is requested by `ensureFileScopeStoragePermission()` before loading.
+- **AndroidManifest pathPattern**: the filter uses a *single* backslash (`".*\.daf"`). Using `".*\\.daf"` would break the filter because XML expects a literal backslash, not an escaped one.
+- **Supported intents**:
+  - VIEW/SEND for `.daf` by extension (`pathPattern`), MIME type `application/x-daf`, and fallback MIME `application/octet-stream`.
+  - The app also registers the custom MIME type for sharing.
+- **FileProvider**: declared with authority `${applicationId}.fileprovider` and `cache-path`, `external-cache-path`, `external-files-path` for sharing saved `.daf` files.
+- **Saving converted files**: uses `CreateDocument` with MIME type `application/x-daf`; the resulting URI is written via a content resolver stream.
+- **Lossy source warning**: `AudioFileLoader.isLossyExtension()` flags MP3/AAC/etc.; conversion UI shows a warning (`ConversionStage.WARNING_LOSSY`). Users must confirm to proceed.
+- **Library persistence**:
+  - Tracks are stored in internal storage `filesDir/library` as `<id>.daf` plus a `manifest.tsv`.
+  - `manifest.tsv` must start with version line `1`; otherwise the library loads empty.
+  - Manifest writes are atomic (temp file renamed) to avoid corruption.
+  - Metadata is Base64‑encoded; audio PCM is decoded lazily via `LibraryStore.loadAudio()`.
+- **Audio loading flow**:
+  - `AudioFileLoader.copyToCache()` copies any `content://` URI to a temporary cache file, which is deleted after decoding.
+  - Decoding uses `PlatformAudioDecoder` for any format supported by Android's `MediaCodec`; otherwise uses `WavCodec` or `DAFCodec` based on header/extension.
+- **Codec implementation notes**:
+  - `BitWriter` uses a `ByteArrayOutputStream` to avoid massive object allocation during encoding (prevents OOM on large files).
+  - `DAFCodec` processes audio in 4096‑sample blocks; progress callbacks fire every 32 blocks or at completion.
+  - `PlatformAudioDecoder` reports progress based on media duration and throttles updates (≈ every 50 buffers).
+- **Player**: `PcmPlayer` streams decoded PCM via `AudioTrack` in `MODE_STREAM`. Play, pause, seek, and stop are handled via coroutines.
+- **Compose UI**: uses Material 3 with custom `LiquidGlass` components that avoid `Modifier.blur()` because Compose lacks true backdrop capture.
